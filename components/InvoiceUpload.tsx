@@ -1,14 +1,17 @@
-import { useRef, useState } from 'react';
-import { Upload, X, Loader2, CheckCircle2 } from 'lucide-react';
+import { useRef, useState } from "react";
+import { Upload, X, CheckCircle2, FileText } from "lucide-react";
 
 interface InvoiceUploadProps {
   onUpload: (file: File) => void;
   uploadedImage: string | null;
-  isExtracting: boolean;
   onReset: () => void;
 }
 
-export function InvoiceUpload({ onUpload, uploadedImage, isExtracting, onReset }: InvoiceUploadProps) {
+export function InvoiceUpload({
+  onUpload,
+  uploadedImage,
+  onReset,
+}: InvoiceUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -26,7 +29,7 @@ export function InvoiceUpload({ onUpload, uploadedImage, isExtracting, onReset }
     setIsDragging(false);
 
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
+    if (file && (file.type.startsWith("image/") || file.type === "application/pdf")) {
       onUpload(file);
     }
   };
@@ -52,10 +55,11 @@ export function InvoiceUpload({ onUpload, uploadedImage, isExtracting, onReset }
           onDrop={handleDrop}
           className={`
             border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
-            transition-all duration-200
-            ${isDragging
-              ? 'border-indigo-600 bg-indigo-50'
-              : 'border-gray-300 hover:border-indigo-400 hover:bg-gray-50'
+            transition-all duration-200 h-96 flex flex-col items-center justify-center
+            ${
+              isDragging
+                ? "border-indigo-600 bg-indigo-50"
+                : "border-gray-300 hover:border-indigo-400 hover:bg-gray-50"
             }
           `}
         >
@@ -72,10 +76,11 @@ export function InvoiceUpload({ onUpload, uploadedImage, isExtracting, onReset }
               </p>
             </div>
           </div>
+
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf"
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -83,44 +88,39 @@ export function InvoiceUpload({ onUpload, uploadedImage, isExtracting, onReset }
       ) : (
         <div className="space-y-4">
           <div className="relative rounded-xl overflow-hidden border-2 border-gray-200">
-            <img
-              src={uploadedImage}
-              alt="Uploaded invoice"
-              className="w-full h-auto max-h-96 object-contain bg-gray-50"
-            />
-            {!isExtracting && (
-              <button
-                onClick={onReset}
-                className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors shadow-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
+            {/* Display uploaded image/PDF placeholder */}
+            {uploadedImage.endsWith('.pdf') ? (
+                <div className="w-full h-96 flex items-center justify-center bg-gray-50 text-gray-500">
+                    <FileText className="w-12 h-12 mr-2" />
+                    PDF File Uploaded (Preview not available)
+                </div>
+            ) : (
+                <img
+                    src={uploadedImage}
+                    alt="Uploaded invoice"
+                    className="w-full h-auto max-h-96 object-contain bg-gray-50"
+                />
             )}
+
+            <button
+              onClick={onReset}
+              className="absolute top-2 right-2 bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors shadow-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
-          {isExtracting && (
-            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-              <div className="flex items-center gap-3">
-                <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
-                <div>
-                  <p className="text-indigo-900">Extracting data...</p>
-                  <p className="text-indigo-600 text-sm">AI is analyzing your invoice</p>
-                </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-5 h-5 text-blue-600" />
+              <div>
+                <p className="text-blue-900">Invoice document uploaded!</p>
+                <p className="text-blue-600 text-sm">
+                  Review and edit the form, then click **Submit & Validate** below.
+                </p>
               </div>
             </div>
-          )}
-
-          {!isExtracting && uploadedImage && (
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="w-5 h-5 text-green-600" />
-                <div>
-                  <p className="text-green-900">Data extracted successfully!</p>
-                  <p className="text-green-600 text-sm">Review and edit the form as needed</p>
-                </div>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
     </div>

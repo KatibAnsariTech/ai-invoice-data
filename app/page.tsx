@@ -4,6 +4,7 @@ import { useState } from "react";
 import { InvoiceUpload } from "../components/InvoiceUpload";
 import { InvoiceForm } from "../components/InvoiceForm";
 import { FileText } from "lucide-react";
+import { Buffer } from "buffer"; // Ensure Buffer is imported
 
 export interface InvoiceData {
   invoiceNumber: string;
@@ -25,112 +26,129 @@ export interface InvoiceData {
   total: number;
 }
 
+const emptyItem = {
+    description: '',
+    quantity: 0,
+    unitPrice: 0,
+    amount: 0,
+};
+
+// Initial state with empty values, but one line item to ensure form visibility.
+const initialInvoice: InvoiceData = {
+  invoiceNumber: "",
+  invoiceDate: "",
+  dueDate: "",
+  vendorName: "",
+  vendorEmail: "",
+  vendorAddress: "",
+  billToName: "",
+  billToAddress: "",
+  items: [emptyItem], // Start with one empty item
+  subtotal: 0.00,
+  tax: 0.00,
+  total: 0.00,
+};
+
 export default function Home() {
-  const [invoiceData, setInvoiceData] = useState<InvoiceData | null>(null);
+  const [formData, setFormData] = useState<InvoiceData>(initialInvoice);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
-  const [isExtracting, setIsExtracting] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<
+    Record<string, string>
+  >({});
+  const [loading, setLoading] = useState(false);
 
-  function normalizeInvoiceData(raw: any): InvoiceData {
-    return {
-      invoiceNumber: raw.invoiceNumber ?? "",
-      invoiceDate: raw.invoiceDate ?? "",
-      dueDate: raw.dueDate ?? "",
-      vendorName: raw.vendor?.name ?? raw.vendorName ?? "",
-      vendorEmail: raw.vendor?.email ?? raw.vendorEmail ?? "",
-      vendorAddress: raw.vendor?.address ?? raw.vendorAddress ?? "",
-      billToName: raw.customer?.name ?? raw.billToName ?? "",
-      billToAddress: raw.customer?.address ?? raw.billToAddress ?? "",
-
-      items: Array.isArray(raw.items)
-        ? raw.items.map((item: any) => ({
-            description: item.description ?? "",
-            quantity: Number(item.quantity) || 0,
-            unitPrice: Number(item.unitPrice) || 0,
-            amount: Number(item.amount) || 0,
-          }))
-        : [],
-
-      subtotal:
-        Number(raw.subtotal) ||
-        (Array.isArray(raw.items)
-          ? raw.items.reduce(
-              (sum: number, it: any) => sum + (Number(it.amount) || 0),
-              0
-            )
-          : 0),
-
-      tax: Number(raw.tax) || 0,
-      total: Number(raw.total) || 0,
-    };
-  }
-
-  const handleImageUpload = async (file: File) => {
-    const imageUrl = URL.createObjectURL(file);
-    setUploadedImage(imageUrl);
-    setIsExtracting(true);
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const res = await fetch("/api/extract", {
-      method: "POST",
-      body: formData,
-    });
-
-    const raw = await res.json();
-
-    const clean: InvoiceData = normalizeInvoiceData(raw);
-
-    setInvoiceData(clean);
-    setIsExtracting(false);
-  };
-
-  const handleFormChange = (data: InvoiceData) => {
-    setInvoiceData(data);
+  const handleUpload = (file: File) => {
+    setUploadedFile(file);
+    setUploadedImage(URL.createObjectURL(file));
+    setValidationErrors({});
   };
 
   const handleReset = () => {
-    setInvoiceData(null);
+    setUploadedFile(null);
     setUploadedImage(null);
-    setIsExtracting(false);
+    setValidationErrors({});
+    setFormData(initialInvoice);
+  };
+
+  // SUBMISSION/VALIDATION LOGIC
+  const handleSubmit = async () => {
+    if (!uploadedFile) {
+      alert("Please upload an invoice image before submitting for validation.");
+      return;
+    }
+
+    setLoading(true);
+    setValidationErrors({});
+
+    try {
+      const buffer = await uploadedFile.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString("base64");
+
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          formData,
+          imageBase64: base64,
+          fileType: uploadedFile.type,
+        }),
+      });
+      
+      const json = await res.json();
+
+      if (res.status === 400 && json.errors) {
+        setValidationErrors(json.errors);
+        alert("Validation failed. Please check the form for errors.");
+      } else if (res.ok) {
+        alert("Validation successful! Form data matches the invoice image.");
+      } else {
+        alert(`An error occurred during validation: ${json.error || 'Unknown error'}`);
+      }
+
+    } catch (error) {
+        console.error("Submission error:", error);
+        alert("An unexpected error occurred during submission.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="container mx-auto px-4 py-8 max-w-7xl">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3 mb-4">
             <div className="bg-indigo-600 p-3 rounded-xl">
               <FileText className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-indigo-900">AI Invoice Data Extractor</h1>
+            <h1 className="text-indigo-900">AI Invoice Validator</h1>
           </div>
           <p className="text-gray-600 max-w-2xl mx-auto">
-            Upload your invoice image and let AI automatically extract and fill
-            in the details
+            Fill the form manually → Upload invoice → AI validates accuracy on submit
           </p>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
-          {/* Upload Section */}
           <div className="bg-white rounded-2xl shadow-lg p-6">
-            <h2 className="text-indigo-900 mb-4">Upload Invoice</h2>
-            <InvoiceUpload
-              onUpload={handleImageUpload}
-              uploadedImage={uploadedImage}
-              isExtracting={isExtracting}
-              onReset={handleReset}
+            <h2 className="text-indigo-900 mb-4">Invoice Form</h2>
+            <InvoiceForm
+              data={formData}
+              errors={validationErrors}
+              onChange={setFormData}
+              onSubmit={handleSubmit}
+              isExtracting={loading}
             />
           </div>
-
-          {/* Form Section */}
-          <div className="bg-white rounded-2xl shadow-lg p-6">
-            <h2 className="text-indigo-900 mb-4">Extracted Data</h2>
-            <InvoiceForm
-              data={invoiceData}
-              onChange={handleFormChange}
-              isExtracting={isExtracting}
+          
+          <div className="bg-white rounded-2xl shadow-lg p-6 order-first lg:order-last">
+            <h2 className="text-indigo-900 mb-4">Invoice Upload</h2>
+            <InvoiceUpload
+              onUpload={handleUpload}
+              uploadedImage={uploadedImage}
+              onReset={handleReset}
             />
           </div>
         </div>

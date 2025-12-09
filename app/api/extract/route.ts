@@ -1,98 +1,102 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { Buffer } from "buffer"; // 💡 Added Buffer import for robustness
+import { Buffer } from "buffer";
+import { InvoiceData } from "../../page"; // Assuming page.tsx defines this interface
 
-// Define the runtime environment if you are not using the default Node.js runtime
-// export const runtime = 'nodejs';
+// Define the expected structure for the response JSON
+interface ValidationResponse {
+  validationResult: "pass" | "fail";
+  errors: Record<keyof InvoiceData | string, string>;
+}
 
 export async function POST(req: Request) {
   try {
-    const form = await req.formData();
-    // Ensure the key 'file' matches the name attribute in your frontend form
-    const file = form.get("file") as File | null;
+    const { formData, imageBase64, fileType } = await req.json();
 
-    if (!file) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+    if (!imageBase64) {
+      return NextResponse.json(
+        { error: "No image data provided" },
+        { status: 400 }
+      );
     }
 
-    // 1. Convert File to base64 string
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const dataUrl = `data:${file.type};base64,${base64}`;
+    const dataUrl = `data:${fileType};base64,${imageBase64}`;
 
-    const client = new OpenAI({ apiKey: process.env.NEXT_OPENAI_API_KEY });
+    const client = new OpenAI({
+      apiKey: process.env.NEXT_OPENAI_API_KEY, // Make sure NOT to use NEXT_
+    });
+
+    // Convert formData to a readable string for the prompt
+    const formDataString = JSON.stringify(formData, null, 2);
 
     const prompt = `
-You are an expert data extraction assistant. Analyze the uploaded invoice image and extract all relevant information.
-Return ONLY a single, valid JSON object that strictly conforms to the InvoiceData interface.
+You are an AI Invoice Validator. Your task is to compare the user's provided form data with the actual data visible in the uploaded invoice image.
 
-JSON Structure to follow:
-{
-  "invoiceNumber": "string | empty string",
-  "invoiceDate": "YYYY-MM-DD | empty string",
-  "dueDate": "YYYY-MM-DD | empty string",
-  "vendorName": "string | empty string",
-  "vendorEmail": "string | empty string",
-  "vendorAddress": "string | empty string",
-  "billToName": "string | empty string",
-  "billToAddress": "string | empty string",
-  "items": [
-    {
-      "description": "string | empty string",
-      "quantity": "number | 0",
-      "unitPrice": "number | 0",
-      "amount": "number | 0"
-    }
-  ],
-  "subtotal": "number | 0",
-  "tax": "number | 0",
-  "total": "number | 0"
-}
+1.  **Extract** all relevant data from the invoice image.
+2.  **Compare** the extracted data with the user's submitted form data (provided below).
+3.  **Return ONLY a JSON object**.
+4.  The JSON MUST have two top-level keys: "validationResult" and "errors".
 
-If any field is missing or cannot be found, use an empty string ("") for text fields and 0 for number fields. Do NOT include any explanations or markdown formatting like \`\`\`json.
-`;
-    // 2. Use the correct method: client.chat.completions.create
+5.  **CRUCIAL - Date Handling (Format Mismatch Fix):**
+    For date fields ('invoiceDate', 'dueDate'), standardize the extracted value from the invoice to the strict **YYYY-MM-DD** format (e.g., 'January 15, 2022' MUST become '2022-01-15') **before** comparison.
+
+6.  **CRUCIAL - Field Validation Rules (Addressing Missing Data Errors):**
+    * **Case A (User Data Mismatch):** If a user form field has a non-empty/non-zero value, and the corresponding data is found in the invoice, but the two values **do not match**, report an error.
+    * **Case B (User Data Missing, Invoice Data Present - e.g., Customer Name):** If a user form field is empty or zero (e.g., "" or 0), but the corresponding data **is found** in the invoice image (e.g., 'ABC Company' found for an empty 'Bill To Name'), **DO NOT report an error**. This is considered acceptable (the user is expected to fill it in later).
+    * **Case C (Invoice Data Missing - e.g., Vendor Info):** If a field in the invoice is **not found** (e.g., 'Vendor Email' is not on the invoice), **DO NOT report an error**, regardless of the user's input value.
+
+7.  Set "validationResult" to "fail" if any data point violates Case A.
+8.  The "errors" object should only contain fields where the user's data is incorrect (Case A). The value must be a descriptive error message indicating the discrepancy and the correct value from the invoice.
+9.  If the validationResult is "pass", the "errors" object must be empty: {}.
+10. The user-submitted form data is:
+${formDataString}
+    `;
+
     const response = await client.chat.completions.create({
       model: "gpt-4o",
-      // ADD THIS LINE: Explicitly force the model to return a JSON object
-      response_format: { type: "json_object" },
       messages: [
         {
           role: "user",
           content: [
-            // Text part of the prompt
-            // 💡 Update the prompt to include the structure
             {
               type: "text",
-              text:
-                prompt +
-                `\n\nReturn the data in the following JSON structure: { "invoiceNumber": "...", "items": [{ "description": "...", "quantity": 0, "unitPrice": 0, "amount": 0 }], "subtotal": 0, "total": 0, ... }`,
+              text: prompt,
             },
-            // Image part of the content
-            { type: "image_url", image_url: { url: dataUrl } },
+            {
+              type: "image_url",
+              image_url: {
+                url: dataUrl,
+                detail: "high",
+              },
+            },
           ],
         },
       ],
-      max_tokens: 1024,
+      response_format: { type: "json_object" },
     });
 
     const output = response.choices[0].message.content || "";
 
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
+    const match = output.match(/\{[\s\S]*\}/);
+    if (!match) {
       return NextResponse.json(
         { error: "Model did not return valid JSON", raw: output },
         { status: 500 }
       );
     }
 
-    const parsed = JSON.parse(output);
+    const parsed: ValidationResponse = JSON.parse(match[0]);
 
-    return NextResponse.json(parsed);
+    if (parsed.validationResult === "fail") {
+      return NextResponse.json({ errors: parsed.errors }, { status: 400 });
+    }
+
+    return NextResponse.json({ message: "Validation successful" });
   } catch (err: any) {
-    // 💡 Logging the full error might help debugging
     console.error("API Error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json(
+      { error: err.message || "An unknown error occurred" },
+      { status: 500 }
+    );
   }
 }
