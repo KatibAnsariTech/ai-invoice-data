@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { Buffer } from "buffer";
-import { InvoiceData } from "../../page"; // Assuming page.tsx defines this interface
+// Assuming InvoiceData interface is defined in a shared file like page.tsx
+import { InvoiceData } from "../../page"; 
 
 // Define the expected structure for the response JSON
 interface ValidationResponse {
@@ -23,14 +24,15 @@ export async function POST(req: Request) {
     const dataUrl = `data:${fileType};base64,${imageBase64}`;
 
     const client = new OpenAI({
-      apiKey: process.env.NEXT_OPENAI_API_KEY, // Make sure NOT to use NEXT_
+      // Corrected API key variable
+      apiKey: process.env.NEXT_OPENAI_API_KEY, 
     });
 
     // Convert formData to a readable string for the prompt
     const formDataString = JSON.stringify(formData, null, 2);
 
     const prompt = `
-You are an AI Invoice Validator. Your task is to compare the user's provided form data with the actual data visible in the uploaded invoice image.
+You are an AI Invoice Validator. Your task is to perform a **strict validation** by comparing the user's provided form data with the actual data visible in the uploaded invoice image.
 
 1.  **Extract** all relevant data from the invoice image.
 2.  **Compare** the extracted data with the user's submitted form data (provided below).
@@ -38,15 +40,15 @@ You are an AI Invoice Validator. Your task is to compare the user's provided for
 4.  The JSON MUST have two top-level keys: "validationResult" and "errors".
 
 5.  **CRUCIAL - Date Handling (Format Mismatch Fix):**
-    For date fields ('invoiceDate', 'dueDate'), standardize the extracted value from the invoice to the strict **YYYY-MM-DD** format (e.g., 'January 15, 2022' MUST become '2022-01-15') **before** comparison.
+    For date fields ('invoiceDate', 'dueDate'), standardize the extracted value from the invoice to the strict **YYYY-MM-DD** format (e.g., 'January 15, 2022' MUST become '2022-01-15') before comparison.
 
-6.  **CRUCIAL - Field Validation Rules (Addressing Missing Data Errors):**
-    * **Case A (User Data Mismatch):** If a user form field has a non-empty/non-zero value, and the corresponding data is found in the invoice, but the two values **do not match**, report an error.
-    * **Case B (User Data Missing, Invoice Data Present - e.g., Customer Name):** If a user form field is empty or zero (e.g., "" or 0), but the corresponding data **is found** in the invoice image (e.g., 'ABC Company' found for an empty 'Bill To Name'), **DO NOT report an error**. This is considered acceptable (the user is expected to fill it in later).
-    * **Case C (Invoice Data Missing - e.g., Vendor Info):** If a field in the invoice is **not found** (e.g., 'Vendor Email' is not on the invoice), **DO NOT report an error**, regardless of the user's input value.
+6.  **CRUCIAL - Strict Validation Rules (FIX for Misidentified Missing Fields):**
+    * **Rule A (Value Mismatch):** If a user form field has a non-empty/non-zero value, and the corresponding data is found in the invoice, but the two values **do not match**, report an error.
+    * **Rule B (Required Field Missing in Form):** If a user form field is empty or zero (e.g., "" or 0) **AND** you successfully extract ANY value from the invoice that corresponds to this field (e.g., you find a Vendor Name for an empty 'vendorName' field in the form), **YOU MUST REPORT AN ERROR.** This ensures the user fills out all available data. The error message must state the missing field and the expected value from the invoice.
+    * **Rule C (Invoice Data Truly Missing):** If a field (like 'Vendor Email') is **not physically present or extractable** from the invoice, **DO NOT report an error**, regardless of the user's input value.
 
-7.  Set "validationResult" to "fail" if any data point violates Case A.
-8.  The "errors" object should only contain fields where the user's data is incorrect (Case A). The value must be a descriptive error message indicating the discrepancy and the correct value from the invoice.
+7.  Set "validationResult" to "fail" if any data point violates Rule A or Rule B.
+8.  The "errors" object should only contain fields where the user's data is incorrect (Rule A) or missing (Rule B). The value must be a descriptive error message indicating the discrepancy and the correct value from the invoice.
 9.  If the validationResult is "pass", the "errors" object must be empty: {}.
 10. The user-submitted form data is:
 ${formDataString}
